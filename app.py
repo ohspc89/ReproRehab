@@ -1,4 +1,5 @@
 import sys
+import os
 import pandas as pd
 from PyQt6.QtWidgets import (QMessageBox, QMainWindow, QApplication, QComboBox,
         QLabel, QWidget, QToolBar, QStatusBar, QDialog, QVBoxLayout, QGridLayout,
@@ -46,23 +47,27 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(16,16))
         self.addToolBar(toolbar)
 
+        # Icon to 'load' the file
+        load_action = QAction(QIcon('icons8-opened-folder-48.png'), "&Load", self)
+        load_action.setStatusTip("Loading the REDCap export file")
+        load_action.triggered.connect(self.open_filediag)
+        toolbar.addAction(load_action)
+
+        # Icon to 'convert' the file
         convert_action = QAction(QIcon('icons8-update-left-rotation-48.png'), "&Convert", self)
         convert_action.setStatusTip("Converting the REDCap export file")
         convert_action.triggered.connect(self.file_convert)
         toolbar.addAction(convert_action)
 
-        load_action = QAction("&Load", self)
-        load_action.setStatusTip("Loading the REDCap export file")
-        load_action.triggered.connect(self.open_filediag)
-
         # setting a status bar
         self.setStatusBar(QStatusBar(self))
 
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&File")
-        file_menu.addAction(load_action)
-        file_menu.addSeparator()
+        # It seems like Mac forces the menu bar to appear at the top, no matter what
+        # So switching to a button
+        #menu = self.menuBar()
+        #file_menu = menu.addMenu("&File")
+        #file_menu.addAction(load_action)
+        #file_menu.addSeparator()
 
         self.show()
 
@@ -92,7 +97,9 @@ class MainWindow(QMainWindow):
         # change the column names to what we want
         out = temp.rename(columns={cois[0]: 'id', cois[1]: 'visit_num', cois[2]: 'time_donned', cois[3]: 'time_doffed'})
 
-        out.to_csv('extracted_times.csv', index=False)
+        # It is better to save it at the current working directory
+        curdir = os.path.abspath(os.curdir)
+        out.to_csv('/'.join([curdir, 'extracted_times.csv']), index=False)
         # If things went well, throw out a message
         msg = QMessageBox(self)
         msg.setWindowTitle("Important Message")
