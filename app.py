@@ -9,6 +9,7 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import Qt, QSize
 
 basedir = os.path.dirname(__file__)
+workdir = os.path.abspath(os.curdir)
 
 class MainWindow(QMainWindow):
 
@@ -75,13 +76,11 @@ class MainWindow(QMainWindow):
 
     def open_filediag(self, s):
         # You will be opening a file dialogue to search for the file
-        dialog = QFileDialog(self)
-        dialog.exec()
-        self.fileNames = dialog.selectedFiles()
+        self.fileNames = QFileDialog.getOpenFileName(self, "Open File", basedir, "CSV files (*.csv)")
 
         ## load the file as well
         # Try if the user does not load a file at the first go
-        try:
+        if self.fileNames[0]:
             self.dt = pd.read_csv(self.fileNames[0])
             cols = self.dt.columns
 
@@ -90,11 +89,11 @@ class MainWindow(QMainWindow):
             self.visit_dropdown.addItems(cols)
             self.donned_dropdown.addItems(cols)
             self.doffed_dropdown.addItems(cols)
-        except:
-            pass
-
+        else:
+            return
+            
     def file_convert(self):
-        try:
+        if hasattr(self, 'dt'):
             # Columns Of InterestS
             # Currently, the order should be [id, visit number, time donned, time dofed]
             cois = [self.id_dropdown.currentText(), self.visit_dropdown.currentText(),
@@ -104,15 +103,19 @@ class MainWindow(QMainWindow):
             # change the column names to what we want
             out = temp.rename(columns={cois[0]: 'id', cois[1]: 'visit_num', cois[2]: 'time_donned', cois[3]: 'time_doffed'})
 
-            # It is better to save it at the current working directory
-            curdir = os.path.abspath(os.curdir)
-            out.to_csv(os.path.join(curdir, 'extracted_times.csv'), index=False)
-            # If things went well, throw out a message
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Important Message")
-            msg.setText("Conversion completed")
-            msg.exec()
-        except:
+            # Let the person save the file at the designated location
+            outname = QFileDialog.getSaveFileName(self, 'Save File', filter='*.csv')
+            if (outname[0] == ''):
+                pass
+            else:
+                out.to_csv(outname[0], index=False)
+            
+                # If things went well, throw out a message
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Important Message")
+                msg.setText("Conversion completed")
+                msg.exec()
+        else:
             msg = QMessageBox(self)
             msg.setWindowTitle("Important Message")
             msg.setText("File not loaded")
