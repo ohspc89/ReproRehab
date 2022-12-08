@@ -73,18 +73,18 @@ class ConvertWindow(QMainWindow):
         layout.addWidget(QLabel('Select corresponding columns\nfrom your csv file for each item.'), 1, 0)
 
         self.id_dropdown = QComboBox()
-        self.visit_dropdown = QComboBox()
+        self.fname_dropdown = QComboBox()
         self.donned_dropdown = QComboBox()
         self.doffed_dropdown = QComboBox()
 
-        layout.addWidget(QLabel('id : '),          2, 0)
-        layout.addWidget(self.id_dropdown,         2, 1)
-        layout.addWidget(QLabel('visit number: '), 3, 0)
-        layout.addWidget(self.visit_dropdown,      3, 1)
-        layout.addWidget(QLabel('time donned: '),  4, 0)
-        layout.addWidget(self.donned_dropdown,     4, 1)
-        layout.addWidget(QLabel('time doffed: '),  5, 0)
-        layout.addWidget(self.doffed_dropdown,     5, 1)
+        layout.addWidget(QLabel('id : '), 2, 0)
+        layout.addWidget(self.id_dropdown, 2, 1)
+        layout.addWidget(QLabel('filename: '), 3, 0)
+        layout.addWidget(self.fname_dropdown, 3, 1)
+        layout.addWidget(QLabel('time donned: '), 4, 0)
+        layout.addWidget(self.donned_dropdown, 4, 1)
+        layout.addWidget(QLabel('time doffed: '), 5, 0)
+        layout.addWidget(self.doffed_dropdown, 5, 1)
 
         widget = QWidget()
         widget.setLayout(layout)            # so I think you should have a widget to place a layout
@@ -131,7 +131,7 @@ class ConvertWindow(QMainWindow):
             cols = self.dt.columns
             # Then fill in the dropdown menus with the column names of the original csv file
             self.id_dropdown.addItems(cols)
-            self.visit_dropdown.addItems(cols)
+            self.fname_dropdown.addItems(cols)
             self.donned_dropdown.addItems(cols)
             self.doffed_dropdown.addItems(cols)
         else:
@@ -140,13 +140,18 @@ class ConvertWindow(QMainWindow):
     def file_convert(self):
         if hasattr(self, 'dt'):
             # Columns Of InterestS (cois)
-            # Currently, the order should be [id, visit number, time donned, time doffed]
-            cois = [self.id_dropdown.currentText(), self.visit_dropdown.currentText(),
-                    self.donned_dropdown.currentText(), self.doffed_dropdown.currentText()]
+            # Currently, the order should be [id, filename, time donned, time doffed]
+            cois = [self.id_dropdown.currentText(), 
+                    self.fname_dropdown.currentText(),
+                    self.donned_dropdown.currentText(), 
+                    self.doffed_dropdown.currentText()]
             # Get the subset
             temp = self.dt.loc[:, cois]
             # change the column names to what we want
-            out = temp.rename(columns={cois[0]: 'id', cois[1]: 'visit_num', cois[2]: 'time_donned', cois[3]: 'time_doffed'})
+            out = temp.rename(columns={cois[0]: 'id', 
+                                       cois[1]: 'filename', 
+                                       cois[2]: 'don_t',    # time donned
+                                       cois[3]: 'doff_t'})  # time doffed
 
             # Let the person save the file at the designated location
             outname = QFileDialog.getSaveFileName(self, 'Save File', filter='*.csv')
