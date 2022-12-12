@@ -6,12 +6,14 @@ APDM Opal V2 only / will add more sensors in the future
 '''
 import sys
 import os
+import numpy as np
 import pandas as pd
-import h5py
-from PyQt6.QtWidgets import (QMessageBox, QMainWindow, QApplication, QComboBox,
-        QLabel, QWidget, QToolBar, QStatusBar, QDialog, QVBoxLayout, QGridLayout,
-        QHBoxLayout, QStackedLayout, QTabWidget, QFileDialog, QPushButton, QGroupBox)
-
+import pytz
+from PyQt6.QtWidgets import (QMessageBox, QMainWindow, QApplication, 
+                             QComboBox, QLabel, QWidget, QToolBar, 
+                             QStatusBar, QDialog, QVBoxLayout, QGridLayout,
+                             QHBoxLayout, QStackedLayout, QTabWidget, 
+                             QFileDialog, QPushButton, QGroupBox)
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QPalette, QColor
 from PyQt6.QtCore import Qt, QSize
 from incwear import Subject, make_start_end_datetime
@@ -19,7 +21,7 @@ from incwear import Subject, make_start_end_datetime
 basedir = os.path.dirname(__file__)
 workdir = os.path.abspath(os.curdir)
 
-H5FILE = None       # global variable
+SUBJECT = None
 
 class Color(QWidget):
     '''Demo purpose (12/11/2022)'''
@@ -39,7 +41,7 @@ class MainWindow(QMainWindow):
 
         # Title of the main window
         self.setWindowTitle("Sensor Data Analysis App")
-        self.win = None       # This is to check if the new window has been opened
+        self.win = None       # Check if the new window has been opened
         self.win2 = None
         self.initUI()
 
@@ -91,13 +93,10 @@ class ProcessingWindow(QMainWindow):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        if hasattr(self.parent, 'dt'):
-            self.rc_filename = self.parent.rc_filename
-            self.redcap = self.parent.out
-        else:
-            self.rc_filename = ''
-            self.redcap = None
+        self.rc_filename = ''
+        self.redcap = None
         self.h5_filename = ''
+        self.timezone = QComboBox()
 
         self.initUI()
 
@@ -117,35 +116,46 @@ class ProcessingWindow(QMainWindow):
         rcgrpbox = QGroupBox("Formatted REDCap file")
         layout.addWidget(rcgrpbox, 0, 0, 1, 9)
 
-        hbox = QHBoxLayout()
-        rcgrpbox.setLayout(hbox)
+        rchbox = QHBoxLayout()
+        rcgrpbox.setLayout(rchbox)
 
         self.rc_loaded = QLabel(self.rc_filename)
         button = QPushButton("load")
         button.clicked.connect(self.load_redcap)
 
-        hbox.addWidget(self.rc_loaded)
-        hbox.addStretch(4)
-        hbox.addWidget(button)
+        rchbox.addWidget(self.rc_loaded)
+        rchbox.addStretch(4)
+        rchbox.addWidget(button)
 
         # GroupBox2: h5 file info
         h5grpbox = QGroupBox("h5 file")
         layout.addWidget(h5grpbox, 1, 0, 1, 9)
 
-        hbox2 = QHBoxLayout()
-        h5grpbox.setLayout(hbox2)
+        h5hbox = QHBoxLayout()
+        h5grpbox.setLayout(h5hbox)
 
         self.h5_loaded = QLabel(self.h5_filename)
         button2 = QPushButton("load")
         button2.clicked.connect(self.load_h5)
 
-        hbox2.addWidget(self.h5_loaded)
-        hbox2.addStretch(4)
-        hbox2.addWidget(button2)
+        h5hbox.addWidget(self.h5_loaded)
+        h5hbox.addStretch(4)
+        h5hbox.addWidget(button2)
 
-        # GroupBox3: outcome variables
+        # GreoupBox3: Study detail
+        infogrpbox = QGroupBox("Study Info")
+        layout.addWidget(infogrpbox, 2, 0, 1, 9)
+
+        infohbox = QHBoxLayout()
+        infogrpbox.setLayout(infohbox)
+        infolbl = QLabel("Timezone of the study site: ")
+        self.timezone.addItems(pytz.all_timezones)
+        infohbox.addWidget(infolbl)
+        infohbox.addWidget(self.timezone)
+
+        # GroupBox4: outcome variables
         outputgrpbox = QGroupBox("Sample output variables")
-        layout.addWidget(outputgrpbox, 2, 0, 7, 2)
+        layout.addWidget(outputgrpbox, 3, 0, 7, 2)
 
         output_layout = QGridLayout()
         outputgrpbox.setLayout(output_layout)
@@ -176,24 +186,25 @@ class ProcessingWindow(QMainWindow):
         output_layout.addWidget(peakacc_l_lbl, 5, 0)
         output_layout.addWidget(peakacc_r_lbl, 6, 0)
 
-        awake_hours = QLabel('')
-        bouts_l_cnt = QLabel('')
-        bouts_r_cnt = QLabel('')
-        avgacc_l = QLabel(''.join(['', " m/s%2"]))
-        avgacc_r = QLabel(''.join(['', " m/s%2"]))
-        peakacc_l = QLabel(''.join(['', " m/s%2"]))
-        peakacc_r = QLabel(''.join(['', " m/s%2"]))
+        self.awake_hours = QLabel('')
+        self.bouts_l_cnt = QLabel('')
+        self.bouts_r_cnt = QLabel('')
+        self.avgacc_l = QLabel(''.join(['', " m/s^2"]))
+        self.avgacc_r = QLabel(''.join(['', " m/s^2"]))
+        self.peakacc_l = QLabel(''.join(['', " m/s^2"]))
+        self.peakacc_r = QLabel(''.join(['', " m/s^2"]))
 
-        output_layout.addWidget(awake_hours, 0, 1)
-        output_layout.addWidget(bouts_l_cnt, 1, 1)
-        output_layout.addWidget(bouts_r_cnt, 2, 1)
-        output_layout.addWidget(avgacc_l, 3, 1)
-        output_layout.addWidget(avgacc_r, 4, 1)
-        output_layout.addWidget(peakacc_l, 5, 1)
-        output_layout.addWidget(peakacc_r, 6, 1)
+        output_layout.addWidget(self.awake_hours, 0, 1)
+        output_layout.addWidget(self.bouts_l_cnt, 1, 1)
+        output_layout.addWidget(self.bouts_r_cnt, 2, 1)
+        output_layout.addWidget(self.avgacc_l, 3, 1)
+        output_layout.addWidget(self.avgacc_r, 4, 1)
+        output_layout.addWidget(self.peakacc_l, 5, 1)
+        output_layout.addWidget(self.peakacc_r, 6, 1)
 
+        # GroupBox5: Diagnostic plots
         plotgrpbox = QGroupBox("Diagnostic plots")
-        layout.addWidget(plotgrpbox, 2, 2, 7, 7)
+        layout.addWidget(plotgrpbox, 3, 2, 7, 7)
 
         plot_layout = QStackedLayout()
         plotgrpbox.setLayout(plot_layout)
@@ -214,6 +225,7 @@ class ProcessingWindow(QMainWindow):
         # Last row: run/clear buttons
         hbox_bottom = QHBoxLayout()
 
+        # This should be 'deactivated' when there's no file loaded
         run_button = QPushButton("Run")
         run_button.clicked.connect(self.run_preprocess)
         clear_button = QPushButton("Clear")
@@ -223,7 +235,7 @@ class ProcessingWindow(QMainWindow):
         hbox_bottom.addWidget(run_button)
         hbox_bottom.addWidget(clear_button)
 
-        layout.addLayout(hbox_bottom, 9, 0, 1, 9)
+        layout.addLayout(hbox_bottom, 10, 0, 1, 9)
 
         widget = QWidget()
         widget.setLayout(layout)
@@ -248,14 +260,55 @@ class ProcessingWindow(QMainWindow):
                                                   "h5 files (*.h5)")
         if h5_tempname[0]:
             self.h5_filename = h5_tempname[0]
-            self.f = h5py.File(h5_tempname[0])
             self.h5_loaded.setText(h5_tempname[0])
 
     def run_preprocess(self):
-        pass
+        in_en_dt = make_start_end_datetime(self.redcap,
+                                           self.h5_filename,
+                                           self.timezone.currentText())
+        #self.subject = Subject(self.h5_filename, in_en_dt)
+        print(self.timezone.currentText())
+        global SUBJECT
+        SUBJECT = Subject(self.h5_filename, in_en_dt)
+        mov = SUBJECT.Tmov
+        lkinematics = SUBJECT.kinematics['Lkinematics']
+        rkinematics = SUBJECT.kinematics['Rkinematics']
+        awake_hours_newtxt = "Not yet implemented"
+        bouts_l_cnt_newtxt = str(np.sum(mov['L'].values, dtype='int'))
+        bouts_r_cnt_newtxt = str(np.sum(mov['R'].values, dtype='int'))
+        avgacc_l_newtxt = str(
+                np.median(lkinematics['LavepMov'], dtype='float16'))
+        avgacc_r_newtxt = str(
+                np.median(rkinematics['RavepMov'], dtype='float16'))
+        peakacc_l_newtxt = str(
+                np.median(lkinematics['LpeakpMov'], dtype='float16'))
+        peakacc_r_newtxt = str(
+                np.median(rkinematics['RpeakpMov'], dtype='float16'))
+
+        # set new texts
+        self.awake_hours.setText(awake_hours_newtxt)
+        self.bouts_l_cnt.setText(bouts_l_cnt_newtxt)
+        self.bouts_r_cnt.setText(bouts_r_cnt_newtxt)
+        self.avgacc_l.setText(''.join([avgacc_l_newtxt, ' m/s^2']))
+        self.avgacc_r.setText(''.join([avgacc_r_newtxt, ' m/s^2']))
+        self.peakacc_l.setText(''.join([peakacc_l_newtxt, ' m/s^2']))
+        self.peakacc_r.setText(''.join([peakacc_r_newtxt, ' m/s^2']))
 
     def clear_screen(self):
-        pass
+        ''' clear_screen is a function that clears
+        all the input so far passed to this window
+            1) self.redcap
+            2) self.rc_filename
+            3) self.rc_loaded
+            3) self.h5_filename
+            4) self.
+            5) self.h5_loaded
+        '''
+        self.redcap = None
+        self.rc_filename = ''
+        self.h5_filename = ''
+        self.rc_loaded.setText('')
+        self.h5_loaded.setText('')
 
 
 class ConvertWindow(QMainWindow):
@@ -293,13 +346,14 @@ class ConvertWindow(QMainWindow):
         layout.addWidget(self.doffed_dropdown, 5, 1)
 
         widget = QWidget()
-        widget.setLayout(layout)            # so I think you should have a widget to place a layout
-        self.setCentralWidget(widget)       # and in a window you centre the widget
+        widget.setLayout(layout)   # a widget to place a layout
+        self.setCentralWidget(widget)   # in a window you centre the widget
 
         # setting a status bar
         self.setStatusBar(QStatusBar(self))
 
-        # setting a toolbar - see that this is located at the top (0,0) of the grid layout
+        # setting a toolbar - see that this is located 
+        #   at the top (0,0) of the grid layout
         toolbar = QToolBar("My main toolbar")
         toolbar.setIconSize(QSize(16,16))
         #layout.addWidget(toolbar, 0, 0)
@@ -321,7 +375,7 @@ class ConvertWindow(QMainWindow):
         convert_action.triggered.connect(self.file_convert)
         toolbar.addAction(convert_action)
 
-        # It seems like Mac forces the menu bar to appear at the top, no matter what
+        # It seems like Mac forces the menu bar to appear always at the top
         # So switching to a button
         #menu = self.menuBar()
         #file_menu = menu.addMenu("&File")
@@ -342,7 +396,8 @@ class ConvertWindow(QMainWindow):
         if self.fileNames[0]:
             self.dt = pd.read_csv(self.fileNames[0])
             cols = self.dt.columns
-            # Then fill in the dropdown menus with the column names of the original csv file
+            # Then fill in the dropdown menus with 
+            #   the column names of the original csv file
             self.id_dropdown.addItems(cols)
             self.fname_dropdown.addItems(cols)
             self.donned_dropdown.addItems(cols)
@@ -353,7 +408,8 @@ class ConvertWindow(QMainWindow):
     def file_convert(self):
         if hasattr(self, 'dt'):
             # Columns Of InterestS (cois)
-            # Currently, the order should be [id, filename, time donned, time doffed]
+            # Currently, the order should be:
+            #   [id, filename, time donned, time doffed]
             cois = [self.id_dropdown.currentText(),
                     self.fname_dropdown.currentText(),
                     self.donned_dropdown.currentText(),
@@ -371,9 +427,6 @@ class ConvertWindow(QMainWindow):
             if outname[0] == '':
                 pass
             else:
-                # make the MainWindow to 'contain' this output
-                self.parent.out = out
-                self.parent.rc_filename = outname[0]
                 out.to_csv(outname[0], index=False)
 
                 # If things went well, throw out a message
