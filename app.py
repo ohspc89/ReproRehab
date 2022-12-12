@@ -276,14 +276,15 @@ class ProcessingWindow(QMainWindow):
         awake_hours_newtxt = "Not yet implemented"
         bouts_l_cnt_newtxt = str(np.sum(mov['L'].values, dtype='int'))
         bouts_r_cnt_newtxt = str(np.sum(mov['R'].values, dtype='int'))
+        # median does not have the 'dtype' argument
         avgacc_l_newtxt = str(
-                np.median(lkinematics['LavepMov'], dtype='float16'))
+                np.round(np.median(lkinematics['LavepMov']),2))
         avgacc_r_newtxt = str(
-                np.median(rkinematics['RavepMov'], dtype='float16'))
+                np.round(np.median(rkinematics['RavepMov']),2))
         peakacc_l_newtxt = str(
-                np.median(lkinematics['LpeakpMov'], dtype='float16'))
+                np.round(np.median(lkinematics['LpeakpMov']),2))
         peakacc_r_newtxt = str(
-                np.median(rkinematics['RpeakpMov'], dtype='float16'))
+                np.round(np.median(rkinematics['RpeakpMov']),2))
 
         # set new texts
         self.awake_hours.setText(awake_hours_newtxt)
@@ -309,7 +310,14 @@ class ProcessingWindow(QMainWindow):
         self.h5_filename = ''
         self.rc_loaded.setText('')
         self.h5_loaded.setText('')
-
+        # clear outcome variables
+        self.awake_hours.setText('')
+        self.bouts_l_cnt.setText('')
+        self.bouts_r_cnt.setText('')
+        self.avgacc_l.setText(' m/s^2')
+        self.avgacc_r.setText(' m/s^2')
+        self.peakacc_l.setText(' m/s^2')
+        self.peakacc_r.setText(' m/s^2')
 
 class ConvertWindow(QMainWindow):
     ''' This is the window that will handle
