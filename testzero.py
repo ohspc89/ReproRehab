@@ -17,7 +17,8 @@ from PyQt6.QtCore import Qt, QTimer
 # This needs to be packaged....
 # sys.path.append('/Users/joh/Documents/Personal/incwear/incwear')
 # import apdm
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas,\
+        NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import h5py
 
@@ -185,12 +186,25 @@ class VideoDisplayWidget(QWidget):
         self.setLayout(self.customLayout)
 
 class OpalV1Capture:
-    def __init__(self, h5filename, in_time, tz, **kwargs):
+    def __init__(self, parent, h5filename, in_time, tz, **kwargs):
         """
         Parameters
         ----------
+            parent: class object
+                GraphDisplayWidget?
+
+            h5filename: str
+                Full path to the .h5 file to process
+
             in_time: list
                 [YYYY, MM, DD, HH, mm, SS.SSS], maybe not msec
+
+            tz: pytz.tzfile
+                ex. pytz.timezone('America/Los_Angeles')
+
+        Returns
+        -------
+            None (check attributes)
         """
         super().__init__()
 
@@ -205,7 +219,7 @@ class OpalV1Capture:
             # .h5 filename's first number (ex. 20160606-xxxx.h5) -> YYYYMMDD
             # Time is entered in the MainWindow and provided separately.
             rec_start = datetime(*in_time, tzinfo=tz)  # This is going to be the local time.
-            self.sensorTs = sensordict[self.labels[0]]['Time']
+            self.sensorTs = sensordict[self.labels[0]]['Time'][:]
             # Iterate to find the first time point of sensor recording
             # that's Greater than rec_start,
             idx = 0
@@ -222,25 +236,37 @@ class OpalV1Capture:
                     {x: sensordict[x]['Calibrated']['Accelerometers']
                      for x in self.labels}, self.dp_idx)
 
-            #parent.accmags = self.accmags
-            #parent.sensorTs = self.sensorTs
-            #parent.dp_idx = self.dp_idx
+            parent.accmags = self.accmags
+            parent.sensorTs = self.sensorTs
+            parent.dp_idx = self.dp_idx
 
-    def get_mag(self, sensors, row_idx=None, det_opt='median'):
+    def get_mag(self, sensors, row_idx=0, det_opt='median'):
         """
-        Copying what's in base.py
+        Calculating the norm of tri-axial accelerometer values
+
+        Parameters
+        ----------
+            sensors: dict
+                {label: Nx3 accelerometer readings}
+
+            row_idx: int
+                index of the data point to start trimming data
+
+            det_opt: str
+                method to detrend the magnitude; default set to 'median'
+
+        Returns
+        -------
+            outdict: dict
+                keys: sensors.keys
+                values: detrended accmagnitudes
         """
         if det_opt not in ['median', 'customfunc']:
             det_opt = 'median'
             print('Unknown detrending option - setting it to [median]')
 
         def linalg_norm(arr, row_idx):
-            nrow = arr.shape[0]
-
-            if row_idx is None:
-                row_idx = list(range(nrow))
-            mag = np.linalg.norm(arr[row_idx], axis=1)
-            return mag
+            return np.linalg.norm(arr[row_idx:], axis=1)
 
         mags = map(lambda x: linalg_norm(x, row_idx), list(sensors.values()))
 
@@ -252,22 +278,22 @@ class OpalV1Capture:
         return dict(zip(sensors.keys(), out))
 
 
-class GraphDisplayWidget(FigureCanvasQTAgg):
-    def __init__(self, parent, ydat, xticklab, width=5, height=4, dpi=100):
+class GraphDisplayWidget(FigureCanvas):
+    def __init__(self, parent, width=5, height=4, dpi=100):
         fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = fig.add_subplot(111)
-        self.ydat = ydat
-        self.xticklab = xticklab
+        self.axes = fig.subplots()
+        #self.ydat = ydat
+        #self.xticklab = xticklab
         super().__init__(fig)
 
-    def plot(self):
+    #def plot(self):
         # Here you assume that OpalV1Capture class object is
         # linked
-        self.fig.tight_layout()
-        ax = self.fig.add_subplot(111)
-        ax.plot(self.ydat[0:25]) # First 25 points
-        ax.set_xticks([0])
-        ax.set_xticklabels(self.xticklab)
+    #    self.fig.tight_layout()
+    #    ax = self.fig.add_subplot(111)
+       # ax.plot(self.ydat[0:25]) # First 25 points
+       # ax.set_xticks([0])
+       # ax.set_xticklabels(self.xticklab)
 
 
 class MainWindow(QMainWindow):
@@ -409,7 +435,9 @@ class MainWindow(QMainWindow):
         # Graph in a tab window?
         #graphUI = GraphDisplayWidget(self)  # Giving 'self' as the parent
         #toolbar = NavigationToolbar
-        self.graphDisplayWidget = QTabWidget()
+        self.graphDisplayWidget = GraphDisplayWidget(self)
+        t = np.linspace(0, 30, 30)
+        self._line, = self.graphDisplayWidget.axes.plot(t, t/50, ".")
         #self.tabs = QTabWidget()
         #graphbox = QWidget()
         #graphbox.layout = QVBoxLayout(graphbox)
@@ -419,8 +447,8 @@ class MainWindow(QMainWindow):
         centralView = QGridLayout()
         centralView.addWidget(infogrpbox, 0, 0, 3, 2)
         centralView.addWidget(fmgrpbox, 3, 0, 2, 2)
-        #centralView.addWidget(self.graphDisplayWidget, 0, 2, 4, 3)
-        centralView.addWidget(self.videoDisplayWidget, 2, 2, 4, 3)
+        centralView.addWidget(self.graphDisplayWidget, 0, 2, 3, 3)
+        centralView.addWidget(self.videoDisplayWidget, 3, 2, 4, 3)
 
         centralWidget = QWidget()
         centralWidget.setLayout(centralView)
@@ -474,16 +502,18 @@ class MainWindow(QMainWindow):
                     # preparing in_time....
                     datenum = self.sensorCaptureDate.text().split(sep='/')
                     hhmmss = self.sensorCapturePoint.text().split(sep=':')
-                    in_time =list(map(int, datenum + hhmmss))
-                    print(in_time)
+                    in_time = list(map(int, datenum + hhmmss))
                     # tz
                     tz = pytz.timezone(self.timezone.currentText())
-                    print(tz)
-                    print(self.h5FileName)
                     try:
-                        sensorcapture = OpalV1Capture(self.h5FileName,
-                                                      in_time,
-                                                      tz)
+                        self.sensorcapture = OpalV1Capture(self,
+                                                           self.h5FileName,
+                                                           in_time,
+                                                           tz)
+                        left = self.sensorcapture.accmags['LEFT']
+                        self._line.set_data(range(30), left[0:30])
+                        self._line.figure.canvas.draw()
+                        print("sensor capture successful")
                     except:
                         print('sensorcapture not possible')
                 except:
