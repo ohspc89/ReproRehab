@@ -2,15 +2,24 @@
 # stackoverflow.com/questions/39303008/load-an-opencv-video-frame-by-frame-using-pyqt
 # stackoverflow.com/questions/46656634/pyqt5-qtimer-count-until-specific-seconds
 import sys
+from datetime import datetime
 import pytz
+import cv2
+import numpy as np
+import matplotlib
+matplotlib.use('QtAgg')
 from PyQt6.QtWidgets import (QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
                              QPushButton, QSizePolicy, QFileDialog, QLabel,
                              QGridLayout, QMenuBar, QApplication, QMessageBox,
-                             QGroupBox, QLineEdit, QComboBox)
+                             QGroupBox, QLineEdit, QComboBox, QStackedLayout, QTabWidget)
 from PyQt6.QtGui import QAction, QPixmap, QImage, QPalette, QColor
 from PyQt6.QtCore import Qt, QTimer
-import cv2
-#import apdm
+# This needs to be packaged....
+# sys.path.append('/Users/joh/Documents/Personal/incwear/incwear')
+# import apdm
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT as NavigationToolbar
+from matplotlib.figure import Figure
+import h5py
 
 class Color(QWidget):
     def __init__(self, color):
@@ -64,7 +73,7 @@ class VideoCapture(QWidget):
         # counter set to 0
         self.counter = 0
         # Update at the beginning?
-        self.nextFrameSlot(count = 0)
+        self.nextFrameSlot(count=0)
 
     def nextFrameSlot(self, count):
         """ Updating video_frame
@@ -175,6 +184,92 @@ class VideoDisplayWidget(QWidget):
         # Use the custom Layout
         self.setLayout(self.customLayout)
 
+class OpalV1Capture:
+    def __init__(self, h5filename, in_time, tz, **kwargs):
+        """
+        Parameters
+        ----------
+            in_time: list
+                [YYYY, MM, DD, HH, mm, SS.SSS], maybe not msec
+        """
+        super().__init__()
+
+        with h5py.File(h5filename, 'r') as sensors:
+            self.labels = list(map(lambda k: k.decode('UTF-8'),
+                                   sensors.attrs['MonitorLabelList']))
+            sids = map(lambda k: k.decode('UTF-8'),
+                       sensors.attrs['CaseIdList'])
+            sensordict = {x: sensors[y] for x, y in zip(self.labels, sids)}
+
+            # Trim data, using the time provided...
+            # .h5 filename's first number (ex. 20160606-xxxx.h5) -> YYYYMMDD
+            # Time is entered in the MainWindow and provided separately.
+            rec_start = datetime(*in_time, tzinfo=tz)  # This is going to be the local time.
+            self.sensorTs = sensordict[self.labels[0]]['Time']
+            # Iterate to find the first time point of sensor recording
+            # that's Greater than rec_start,
+            idx = 0
+            while True:
+                sensorT = datetime.fromtimestamp(self.sensorTs[idx]/1e6,
+                                                 tz = pytz.UTC)
+                if sensorT.astimezone(tz) > rec_start:
+                    break
+                # if not true, increase idx by 1 and move on.
+                idx += 1
+            # move 1 back and start manipulating data from there.
+            self.dp_idx = idx - 1
+            self.accmags = self.get_mag(
+                    {x: sensordict[x]['Calibrated']['Accelerometers']
+                     for x in self.labels}, self.dp_idx)
+
+            #parent.accmags = self.accmags
+            #parent.sensorTs = self.sensorTs
+            #parent.dp_idx = self.dp_idx
+
+    def get_mag(self, sensors, row_idx=None, det_opt='median'):
+        """
+        Copying what's in base.py
+        """
+        if det_opt not in ['median', 'customfunc']:
+            det_opt = 'median'
+            print('Unknown detrending option - setting it to [median]')
+
+        def linalg_norm(arr, row_idx):
+            nrow = arr.shape[0]
+
+            if row_idx is None:
+                row_idx = list(range(nrow))
+            mag = np.linalg.norm(arr[row_idx], axis=1)
+            return mag
+
+        mags = map(lambda x: linalg_norm(x, row_idx), list(sensors.values()))
+
+        if det_opt == 'median':
+            out = map(lambda x: x - np.median(x), mags)
+        else:
+            out = map(lambda x: x - np.array([9.80665]), mags)
+
+        return dict(zip(sensors.keys(), out))
+
+
+class GraphDisplayWidget(FigureCanvasQTAgg):
+    def __init__(self, parent, ydat, xticklab, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        self.ydat = ydat
+        self.xticklab = xticklab
+        super().__init__(fig)
+
+    def plot(self):
+        # Here you assume that OpalV1Capture class object is
+        # linked
+        self.fig.tight_layout()
+        ax = self.fig.add_subplot(111)
+        ax.plot(self.ydat[0:25]) # First 25 points
+        ax.set_xticks([0])
+        ax.set_xticklabels(self.xticklab)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -228,7 +323,10 @@ class MainWindow(QMainWindow):
         tzbox = QVBoxLayout()
         tzbox.addWidget(QLabel("Study Timezone:"))
         self.timezone = QComboBox()
-        self.timezone.addItems(pytz.all_timezones)
+        all_tz = pytz.all_timezones
+        self.timezone.addItems(all_tz)
+        # Default set to 'America/Los_Angeles'
+        self.timezone.setCurrentIndex(all_tz.index('America/Los_Angeles'))
         tzbox.addWidget(self.timezone)
 
         vidbox = QVBoxLayout()
@@ -239,12 +337,18 @@ class MainWindow(QMainWindow):
         # Need to specify when does the clock appear in the video
         # This can also be used to move to any point in the video
         vidstartbox = QVBoxLayout()
-        vidstartbox.addWidget(QLabel("Time in video a clock appears (MM:SS):"))
+        vidstartbox.addWidget(QLabel("Video time to check (MM:SS):"))
         self.videoCapturePoint = QLineEdit(self)
         self.videoCapturePoint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vidstartbox.addWidget(self.videoCapturePoint)
         # Time when the sensor button was pressed...
         # Anything on
+        recstartdatebox = QVBoxLayout()
+        recstartdatebox.addWidget(QLabel("Date recording started (YYYY/mm/DD):"))
+        self.sensorCaptureDate = QLineEdit(self)
+        self.sensorCaptureDate.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        recstartdatebox.addWidget(self.sensorCaptureDate)
+
         recstartbox = QVBoxLayout()
         recstartbox.addWidget(QLabel("Time recording started (HH:MM:SS):"))
         self.sensorCapturePoint = QLineEdit(self)
@@ -266,6 +370,7 @@ class MainWindow(QMainWindow):
         infovbox.addLayout(tzbox)
         infovbox.addLayout(vidbox)
         infovbox.addLayout(vidstartbox)
+        infovbox.addLayout(recstartdatebox)
         infovbox.addLayout(recstartbox)
         infovbox.addLayout(buttonhbox)
 
@@ -301,11 +406,20 @@ class MainWindow(QMainWindow):
         fminfovbox.addLayout(estvidtimebox)
 
         self.videoDisplayWidget = VideoDisplayWidget(self)
+        # Graph in a tab window?
+        #graphUI = GraphDisplayWidget(self)  # Giving 'self' as the parent
+        #toolbar = NavigationToolbar
+        self.graphDisplayWidget = QTabWidget()
+        #self.tabs = QTabWidget()
+        #graphbox = QWidget()
+        #graphbox.layout = QVBoxLayout(graphbox)
+        #graphbox.layout.addWidget(self.graphDisplayWidget)
 
         # Configuring the central widget
         centralView = QGridLayout()
         centralView.addWidget(infogrpbox, 0, 0, 3, 2)
         centralView.addWidget(fmgrpbox, 3, 0, 2, 2)
+        #centralView.addWidget(self.graphDisplayWidget, 0, 2, 4, 3)
         centralView.addWidget(self.videoDisplayWidget, 2, 2, 4, 3)
 
         centralWidget = QWidget()
@@ -356,6 +470,22 @@ class MainWindow(QMainWindow):
                     self.capture.frameNumber = 0
                     self.capture.nextFrameSlot(frame_diff)
                     self.updateFrameInfo()
+                    # parent, h5filename, in_time, tz
+                    # preparing in_time....
+                    datenum = self.sensorCaptureDate.text().split(sep='/')
+                    hhmmss = self.sensorCapturePoint.text().split(sep=':')
+                    in_time =list(map(int, datenum + hhmmss))
+                    print(in_time)
+                    # tz
+                    tz = pytz.timezone(self.timezone.currentText())
+                    print(tz)
+                    print(self.h5FileName)
+                    try:
+                        sensorcapture = OpalV1Capture(self.h5FileName,
+                                                      in_time,
+                                                      tz)
+                    except:
+                        print('sensorcapture not possible')
                 except:
                     print("Something's not right.\
                             Please check the time difference you entered")
