@@ -6,21 +6,22 @@ from datetime import datetime
 import pytz
 import cv2
 import numpy as np
+import h5py
 import matplotlib
 matplotlib.use('QtAgg')
+from matplotlib.figure import Figure
 from PyQt6.QtWidgets import (QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
                              QPushButton, QSizePolicy, QFileDialog, QLabel,
                              QGridLayout, QMenuBar, QApplication, QMessageBox,
-                             QGroupBox, QLineEdit, QComboBox, QStackedLayout, QTabWidget)
-from PyQt6.QtGui import QAction, QPixmap, QImage, QPalette, QColor
+                             QGroupBox, QLineEdit, QComboBox, QStackedLayout,
+                             QTabWidget)
+from PyQt6.QtGui import QAction, QPixmap, QImage, QPalette, QColor, QFont
 from PyQt6.QtCore import Qt, QTimer
 # This needs to be packaged....
 # sys.path.append('/Users/joh/Documents/Personal/incwear/incwear')
 # import apdm
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas,\
         NavigationToolbar2QT as NavigationToolbar
-from matplotlib.figure import Figure
-import h5py
 
 class Color(QWidget):
     def __init__(self, color):
@@ -218,7 +219,8 @@ class OpalV1Capture:
             # Trim data, using the time provided...
             # .h5 filename's first number (ex. 20160606-xxxx.h5) -> YYYYMMDD
             # Time is entered in the MainWindow and provided separately.
-            rec_start = datetime(*in_time, tzinfo=tz)  # This is going to be the local time.
+            rec_start = datetime(*in_time)
+            rec_start_tz = tz.localize(rec_start)
             self.sensorTs = sensordict[self.labels[0]]['Time'][:]
             # Iterate to find the first time point of sensor recording
             # that's Greater than rec_start,
@@ -226,7 +228,7 @@ class OpalV1Capture:
             while True:
                 sensorT = datetime.fromtimestamp(self.sensorTs[idx]/1e6,
                                                  tz = pytz.UTC)
-                if sensorT.astimezone(tz) > rec_start:
+                if sensorT > rec_start_tz.astimezone(pytz.utc):
                     break
                 # if not true, increase idx by 1 and move on.
                 idx += 1
@@ -335,19 +337,30 @@ class MainWindow(QMainWindow):
         #   - label to identify Right side
         #   - video file
         #   - approx. time when the clock appears in the video
+
+        # font of the labels: Arial, 18
+        lblfont = QFont("Arial", 18)
+        ansfont = QFont("Arial", 18)
+        ansfont.setBold(True)
+
         infogrpbox = QGroupBox("Required Info.")
         # Layout of infogrpbox
         infovbox = QVBoxLayout()
         infogrpbox.setLayout(infovbox)
 
         h5box = QVBoxLayout()
-        h5box.addWidget(QLabel(".h5 file loaded:"))
+        h5lbl = QLabel(".h5 file loaded:")
+        h5lbl.setFont(lblfont)
+        h5box.addWidget(h5lbl)
         self.h5FileNameLabel = QLabel("")
+        self.h5FileNameLabel.setFont(ansfont)
         self.h5FileNameLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h5box.addWidget(self.h5FileNameLabel)
 
         tzbox = QVBoxLayout()
-        tzbox.addWidget(QLabel("Study Timezone:"))
+        tzboxlbl = QLabel("Study Timezone:")
+        tzboxlbl.setFont(lblfont)
+        tzbox.addWidget(tzboxlbl)
         self.timezone = QComboBox()
         all_tz = pytz.all_timezones
         self.timezone.addItems(all_tz)
@@ -356,28 +369,40 @@ class MainWindow(QMainWindow):
         tzbox.addWidget(self.timezone)
 
         vidbox = QVBoxLayout()
-        vidbox.addWidget(QLabel("Video file loaded:"))
+        vidboxlbl = QLabel("Video file loaded:")
+        vidboxlbl.setFont(lblfont)
+        vidbox.addWidget(vidboxlbl)
         self.videoFileNameLabel = QLabel("")
+        self.videoFileNameLabel.setFont(ansfont)
         self.videoFileNameLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vidbox.addWidget(self.videoFileNameLabel)
         # Need to specify when does the clock appear in the video
         # This can also be used to move to any point in the video
         vidstartbox = QVBoxLayout()
-        vidstartbox.addWidget(QLabel("Video time to check (MM:SS):"))
+        vidstartlbl = QLabel("Frame to display:")
+        vidstartlbl.setFont(lblfont)
+        vidstartbox.addWidget(vidstartlbl)
         self.videoCapturePoint = QLineEdit(self)
+        self.videoCapturePoint.setFont(ansfont)
         self.videoCapturePoint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vidstartbox.addWidget(self.videoCapturePoint)
         # Time when the sensor button was pressed...
         # Anything on
         recstartdatebox = QVBoxLayout()
-        recstartdatebox.addWidget(QLabel("Date recording started (YYYY/mm/DD):"))
+        recstartdatelbl = QLabel("Date recording started (YYYY/mm/DD):")
+        recstartdatelbl.setFont(lblfont)
+        recstartdatebox.addWidget(recstartdatelbl)
         self.sensorCaptureDate = QLineEdit(self)
+        self.sensorCaptureDate.setFont(ansfont)
         self.sensorCaptureDate.setAlignment(Qt.AlignmentFlag.AlignCenter)
         recstartdatebox.addWidget(self.sensorCaptureDate)
 
         recstartbox = QVBoxLayout()
-        recstartbox.addWidget(QLabel("Time recording started (HH:MM:SS):"))
+        recstartlbl = QLabel("Time recording started (HH:MM:SS):")
+        recstartlbl.setFont(lblfont)
+        recstartbox.addWidget(recstartlbl)
         self.sensorCapturePoint = QLineEdit(self)
+        self.sensorCapturePoint.setFont(ansfont)
         self.sensorCapturePoint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         recstartbox.addWidget(self.sensorCapturePoint)
 
@@ -405,25 +430,39 @@ class MainWindow(QMainWindow):
         # Layout of fmgrpbox
         fminfovbox = QVBoxLayout()
         fmgrpbox.setLayout(fminfovbox)
+        
+        # font showing video info : Arial, 24, bold
+        bold24 = QFont("Arial", 24)
+        bold24.setBold(True)
 
         # Frame rate
         fratebox = QVBoxLayout()
-        fratebox.addWidget(QLabel("Video frame rate:"))
+        frateboxlbl = QLabel("Video frame rate:")
+        frateboxlbl.setFont(lblfont)
+        fratebox.addWidget(frateboxlbl)
         self.fps = QLabel("")
+        self.fps.setFont(bold24)
         self.fps.setAlignment(Qt.AlignmentFlag.AlignCenter)
         fratebox.addWidget(self.fps)
 
         # Frame number
         frnumbox = QVBoxLayout()
-        frnumbox.addWidget(QLabel("Current Frame Number:"))
+        frnumboxlbl = QLabel("Current Frame Number:")
+        frnumboxlbl.setFont(lblfont)
+        frnumbox.addWidget(frnumboxlbl)
         self.curfnum = QLabel("")
+        self.curfnum.setFont(bold24)
         self.curfnum.setAlignment(Qt.AlignmentFlag.AlignCenter)
         frnumbox.addWidget(self.curfnum)
 
         # Estimated video time
         estvidtimebox = QVBoxLayout()
-        estvidtimebox.addWidget(QLabel("Current Video Time Estimate:"))
+        estvidtimelbl = QLabel("Current Video Time Estimate:")
+        estvidtimelbl.setFont(lblfont)
+        #estvidtimebox.addWidget(QLabel("Current Video Time Estimate:").setFont(QFont("Arial", 24)))
+        estvidtimebox.addWidget(estvidtimelbl)
         self.estvidtime = QLabel("")
+        self.estvidtime.setFont(bold24)
         self.estvidtime.setAlignment(Qt.AlignmentFlag.AlignCenter)
         estvidtimebox.addWidget(self.estvidtime)
 
@@ -437,17 +476,25 @@ class MainWindow(QMainWindow):
         #toolbar = NavigationToolbar
         self.graphDisplayWidget = GraphDisplayWidget(self)
         t = np.linspace(0, 30, 30)
-        self._line, = self.graphDisplayWidget.axes.plot(t, t/50, ".")
+        self.graphDisplayWidget.axes.set_ylim(-2, 2)
+        self._left, = self.graphDisplayWidget.axes.plot(t, np.sin(t), "-.", color='pink')
+        self._right, = self.graphDisplayWidget.axes.plot(t, np.cos(t), "-.", color='skyblue')
         #self.tabs = QTabWidget()
         #graphbox = QWidget()
         #graphbox.layout = QVBoxLayout(graphbox)
         #graphbox.layout.addWidget(self.graphDisplayWidget)
+        toolbar = NavigationToolbar(self.graphDisplayWidget, self)
+        graphNaviWidget = QWidget()
+        graphnavibox = QVBoxLayout()
+        graphnavibox.addWidget(toolbar)
+        graphnavibox.addWidget(self.graphDisplayWidget)
+        graphNaviWidget.setLayout(graphnavibox) 
 
         # Configuring the central widget
         centralView = QGridLayout()
         centralView.addWidget(infogrpbox, 0, 0, 3, 2)
         centralView.addWidget(fmgrpbox, 3, 0, 2, 2)
-        centralView.addWidget(self.graphDisplayWidget, 0, 2, 3, 3)
+        centralView.addWidget(graphNaviWidget, 0, 2, 3, 3)
         centralView.addWidget(self.videoDisplayWidget, 3, 2, 4, 3)
 
         centralWidget = QWidget()
@@ -492,8 +539,10 @@ class MainWindow(QMainWindow):
                     # Make text inputs not modifiable
                     self.videoCapturePoint.setEnabled(False)
                     self.sensorCapturePoint.setEnabled(False)
-                    min_diff, sec_diff = map(int, self.videoCapturePoint.text().split(sep=':'))
-                    frame_diff = (min_diff*60 + sec_diff) * self.capture.fps-1
+                    self.sensorCaptureDate.setEnabled(False)
+                    self.timezone.setEnabled(False)
+                    #min_diff, sec_diff = map(int, self.videoCapturePoint.text().split(sep=':'))
+                    frame_diff = int(self.videoCapturePoint.text())-1
                     # frame_diff is from frame 0, so first make frameNumber = 0
                     self.capture.frameNumber = 0
                     self.capture.nextFrameSlot(frame_diff)
@@ -510,9 +559,19 @@ class MainWindow(QMainWindow):
                                                            self.h5FileName,
                                                            in_time,
                                                            tz)
-                        left = self.sensorcapture.accmags['LEFT']
-                        self._line.set_data(range(30), left[0:30])
-                        self._line.figure.canvas.draw()
+                        print(self.sensorcapture.accmags['LEFT'])
+                        print(self.capture.frameNumber)
+                        # You need to mind the frame number
+                        print(self.sensorcapture.sensorTs[self.capture.frameNumber])
+                        print(datetime.fromtimestamp(self.sensorcapture.sensorTs[self.capture.frameNumber]/1e6))
+                        #self.graphDisplayWidget.axes.set_xlim(self.sensorcapture.frameNumber, self.sensorcapture.frameNumber + 20)
+                        #self.graphDisplayWidget.axes.set_xlabel("Sample Number")
+                        #self.graphDisplayWidget.axes.set_ylabel("Acc. magnitude (m/s^2)")
+                        # Show 1s window
+                        #self._left.set_data(range(len(left)), left)
+                        #self._right.set_data(range(len(right)), right)
+                        #self._left.figure.canvas.draw()
+                        #self._right.figure.canvas.draw()
                         print("sensor capture successful")
                     except:
                         print('sensorcapture not possible')
@@ -531,6 +590,8 @@ class MainWindow(QMainWindow):
         self.videoCapturePoint.clear()
         self.sensorCapturePoint.setEnabled(True)
         self.sensorCapturePoint.clear()
+        self.sensorCaptureDate.setEnabled(True)
+        self.sensorCaptureDate.clear()
         self.videoFileName = ""
         self.h5FileName = ""
         self.videoFileNameLabel.setText("")
