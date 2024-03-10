@@ -186,17 +186,56 @@ class VideoDisplayWidget(QWidget):
         # Use the custom Layout
         self.setLayout(self.customLayout)
 
-class OpalV1Capture:
-    def __init__(self, parent, h5filename, in_time, tz, **kwargs):
+class OpalCapture:
+    """ class to capture Opal sensor data """
+    def __init__(self, sensors, is_v2=False, **kwargs):
         """
         Parameters
         ----------
-            parent: class object
-                GraphDisplayWidget?
+            sensors: HDF5 file mode 'r' 
+                output of h5py.File(*, 'r')
 
-            h5filename: str
-                Full path to the .h5 file to process
+            is_v2: bool
+                identify if data from V2 sensor
 
+        Returns
+        -------
+            None (check attributes)
+        """
+        if is_v2:
+            self.labels = ['LEFT', 'RIGHT']
+            sids = list(sensors['Sensors'].keys())
+            # If label is 'Right Leg' or 'Pie derecho', then ridx = 1
+            ridx = any(x in sensors['Sensors'][sids[1]]\
+                    ['Configuration'].attrs["Label 0"].decode().lower()
+                       for x in ['right', 'derecho'])
+            sensordict = {'LEFT': sensors['Sensors'][sids[not ridx]],
+                          'RIGHT': sensors['Sensors'][sids[ridx]]}
+        else:
+            self.labels = list(map(lambda k: k.decode('UTF-8'),
+                                   sensors.attrs['MonitorLabelList']))
+            sids = map(lambda k: k.decode('UTF-8'),
+                       sensors.attrs['CaseIdList'])
+            sensordict = {x: sensors[y] for x, y in zip(self.labels, sids)}
+
+        self.sensorTs = sensordict[self.labels[0]]['Time'][:]
+        self.dp_idx = 0
+
+        if is_v2:
+            self.accmags = self.get_mag(
+                    {x: sensordict[x]['Accelerometer']
+                     for x in self.labels}, self.dp_idx)
+        else:
+            self.accmags = self.get_mag(
+                {x: sensordict[x]['Calibrated']['Accelerometers']
+                 for x in self.labels}, self.dp_idx)
+
+    def update(self, in_time, tz):
+        """
+        update the recording start time and the timezone of the dataset
+ 
+        Parameters
+        ----------
             in_time: list
                 [YYYY, MM, DD, HH, mm, SS.SSS], maybe not msec
 
@@ -205,42 +244,25 @@ class OpalV1Capture:
 
         Returns
         -------
-            None (check attributes)
+            dp_idx: int
+                the index near the start of the recording (initially 0)
         """
-        super().__init__()
+        # Trim data, using the time provided...
+        # .h5 filename's first number (ex. 20160606-xxxx.h5) -> YYYYMMDD
+        # Time is entered in the MainWindow and provided separately.
+        rec_start = datetime(*in_time)
+        rec_start_tz = tz.localize(rec_start)
+        # Iterate to find the first time point of sensor recording
+        # that's Greater than rec_start,
+        idx = 0
+        while True:
+            sensorT = datetime.fromtimestamp(self.sensorTs[idx]/1e6,
+                                             tz = pytz.UTC)
+            if sensorT > rec_start_tz.astimezone(pytz.utc):
+                break
+            idx += 1
 
-        with h5py.File(h5filename, 'r') as sensors:
-            self.labels = list(map(lambda k: k.decode('UTF-8'),
-                                   sensors.attrs['MonitorLabelList']))
-            sids = map(lambda k: k.decode('UTF-8'),
-                       sensors.attrs['CaseIdList'])
-            sensordict = {x: sensors[y] for x, y in zip(self.labels, sids)}
-
-            # Trim data, using the time provided...
-            # .h5 filename's first number (ex. 20160606-xxxx.h5) -> YYYYMMDD
-            # Time is entered in the MainWindow and provided separately.
-            rec_start = datetime(*in_time)
-            rec_start_tz = tz.localize(rec_start)
-            self.sensorTs = sensordict[self.labels[0]]['Time'][:]
-            # Iterate to find the first time point of sensor recording
-            # that's Greater than rec_start,
-            idx = 0
-            while True:
-                sensorT = datetime.fromtimestamp(self.sensorTs[idx]/1e6,
-                                                 tz = pytz.UTC)
-                if sensorT > rec_start_tz.astimezone(pytz.utc):
-                    break
-                # if not true, increase idx by 1 and move on.
-                idx += 1
-            # move 1 back and start manipulating data from there.
-            self.dp_idx = idx - 1
-            self.accmags = self.get_mag(
-                    {x: sensordict[x]['Calibrated']['Accelerometers']
-                     for x in self.labels}, self.dp_idx)
-
-            parent.accmags = self.accmags
-            parent.sensorTs = self.sensorTs
-            parent.dp_idx = self.dp_idx
+        self.dp_idx = idx - 1
 
     def get_mag(self, sensors, row_idx=0, det_opt='median'):
         """
@@ -284,6 +306,8 @@ class GraphDisplayWidget(FigureCanvas):
     def __init__(self, parent, width=5, height=4, dpi=100):
         fig = Figure(figsize=(width, height), dpi=dpi)
         self.axes = fig.subplots()
+        self.axes.set_xlabel("Sample Number")
+        self.axes.set_ylabel("Acc. mag (m/s^2)")
         #self.ydat = ydat
         #self.xticklab = xticklab
         super().__init__(fig)
@@ -476,9 +500,10 @@ class MainWindow(QMainWindow):
         #toolbar = NavigationToolbar
         self.graphDisplayWidget = GraphDisplayWidget(self)
         t = np.linspace(0, 30, 30)
-        self.graphDisplayWidget.axes.set_ylim(-2, 2)
-        self._left, = self.graphDisplayWidget.axes.plot(t, np.sin(t), "-.", color='pink')
-        self._right, = self.graphDisplayWidget.axes.plot(t, np.cos(t), "-.", color='skyblue')
+        #self.graphDisplayWidget.axes.set_ylim(-2, 2)
+        self._left, = self.graphDisplayWidget.axes.plot(t, np.sin(t), marker='o', color='pink', label='Left')
+        self._right, = self.graphDisplayWidget.axes.plot(t, np.cos(t), marker="o", color='skyblue', label='Right')
+        self.graphDisplayWidget.axes.legend()
         #self.tabs = QTabWidget()
         #graphbox = QWidget()
         #graphbox.layout = QVBoxLayout(graphbox)
@@ -554,27 +579,25 @@ class MainWindow(QMainWindow):
                     in_time = list(map(int, datenum + hhmmss))
                     # tz
                     tz = pytz.timezone(self.timezone.currentText())
-                    try:
-                        self.sensorcapture = OpalV1Capture(self,
-                                                           self.h5FileName,
-                                                           in_time,
-                                                           tz)
-                        print(self.sensorcapture.accmags['LEFT'])
-                        print(self.capture.frameNumber)
-                        # You need to mind the frame number
-                        print(self.sensorcapture.sensorTs[self.capture.frameNumber])
-                        print(datetime.fromtimestamp(self.sensorcapture.sensorTs[self.capture.frameNumber]/1e6))
-                        #self.graphDisplayWidget.axes.set_xlim(self.sensorcapture.frameNumber, self.sensorcapture.frameNumber + 20)
-                        #self.graphDisplayWidget.axes.set_xlabel("Sample Number")
-                        #self.graphDisplayWidget.axes.set_ylabel("Acc. magnitude (m/s^2)")
-                        # Show 1s window
-                        #self._left.set_data(range(len(left)), left)
-                        #self._right.set_data(range(len(right)), right)
-                        #self._left.figure.canvas.draw()
-                        #self._right.figure.canvas.draw()
-                        print("sensor capture successful")
-                    except:
-                        print('sensorcapture not possible')
+                    # update so that the graph will start near the time
+                    # video recording started
+                    self.sensorcapture.update(in_time, tz)
+                    startline = self.sensorcapture.dp_idx
+                    print(f"This is the sensor's starting idx: {startline}")
+                    print("This is the sensor's time")
+                    print(datetime.fromtimestamp(self.sensorcapture.sensorTs[startline]/1e6, pytz.UTC))
+                    left = self.sensorcapture.accmags['LEFT'][startline:]
+                    right = self.sensorcapture.accmags['RIGHT'][startline:]
+                    # You need to mind the frame number
+                    self.graphDisplayWidget.axes.set_ylim(min(left),max(left))
+                    # Show 1s window
+                    # self.graphDisplayWidget.axes.axvline(self.capture.frameNumber, ymin=0, ymax=10)
+                    self._left.set_data(range(len(left)), left)
+                    self._right.set_data(range(len(right)), right)
+                    self.graphDisplayWidget.axes.legend()
+                    self._left.figure.canvas.draw()
+                    self._right.figure.canvas.draw()
+                    print("sensor capture successful")
                 except:
                     print("Something's not right.\
                             Please check the time difference you entered")
@@ -621,13 +644,16 @@ class MainWindow(QMainWindow):
             print("Please select a .h264 file")
 
     def loadH5File(self):
-        try:
-            self.h5FileName = QFileDialog.getOpenFileName(self, "Select a .h5 file")[0]
-            shortform = self.h5FileName.split(sep="/")[-1]
-            self.h5FileNameLabel.setText(shortform)
-            self.isH5FileLoaded = True
-        except:
-            print("Please select a .h5 file")
+        self.h5FileName = QFileDialog.getOpenFileName(self, "Select a .h5 file")[0]
+        shortform = self.h5FileName.split(sep="/")[-1]
+        self.h5FileNameLabel.setText(shortform)
+        self.isH5FileLoaded = True
+        # Identify if it's OPAL V1 or V2
+        with h5py.File(self.h5FileName, 'r') as preview:
+            if 'MonitorLabelList' in preview.attrs:
+                self.sensorcapture = OpalCapture(preview)
+            else:
+                self.sensorcapture = OpalCapture(preview, is_v2=True)
 
     def updateFrameInfo(self, cond=True, addFrame=1):
         """
